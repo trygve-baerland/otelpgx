@@ -81,6 +81,7 @@ type Tracer struct {
 	logSQLStatement      bool
 	logConnectionDetails bool
 	includeParams        bool
+	disableAcquireTracer bool
 }
 
 type tracerConfig struct {
@@ -96,6 +97,7 @@ type tracerConfig struct {
 	logSQLStatement      bool
 	logConnectionDetails bool
 	includeParams        bool
+	disableAcquireTracer bool
 }
 
 // NewTracer returns a new Tracer.
@@ -115,6 +117,7 @@ func NewTracer(opts ...Option) *Tracer {
 		logSQLStatement:      true,
 		logConnectionDetails: true,
 		includeParams:        false,
+		disableAcquireTracer: false,
 	}
 
 	for _, opt := range opts {
@@ -136,13 +139,14 @@ func NewTracer(opts ...Option) *Tracer {
 				return &s
 			},
 		},
-		tracerAttrs:         cfg.tracerAttrs,
-		meterAttrs:          cfg.meterAttrs,
-		trimQuerySpanName:   cfg.trimQuerySpanName,
-		spanNameCtxFunc:     cfg.spanNameCtxFunc,
-		prefixQuerySpanName: cfg.prefixQuerySpanName,
-		logSQLStatement:     cfg.logSQLStatement,
-		includeParams:       cfg.includeParams,
+		tracerAttrs:          cfg.tracerAttrs,
+		meterAttrs:           cfg.meterAttrs,
+		trimQuerySpanName:    cfg.trimQuerySpanName,
+		spanNameCtxFunc:      cfg.spanNameCtxFunc,
+		prefixQuerySpanName:  cfg.prefixQuerySpanName,
+		logSQLStatement:      cfg.logSQLStatement,
+		includeParams:        cfg.includeParams,
+		disableAcquireTracer: cfg.disableAcquireTracer,
 	}
 
 	tracer.createMetrics()
@@ -591,7 +595,12 @@ func (t *Tracer) TracePrepareEnd(ctx context.Context, _ *pgx.Conn, data pgx.Trac
 
 // TraceAcquireStart is called at the beginning of Acquire.
 // The returned context is used for the rest of the call and will be passed to the TraceAcquireEnd.
+// If WithDisableAcquireTracer was set, then the function is no-op.
 func (t *Tracer) TraceAcquireStart(ctx context.Context, pool *pgxpool.Pool, data pgxpool.TraceAcquireStartData) context.Context {
+	if t.disableAcquireTracer {
+		return ctx
+	}
+
 	ctx = context.WithValue(ctx, startTimeCtxKey{}, time.Now())
 
 	if !trace.SpanFromContext(ctx).IsRecording() {
@@ -624,7 +633,12 @@ func (t *Tracer) TraceAcquireStart(ctx context.Context, pool *pgxpool.Pool, data
 }
 
 // TraceAcquireEnd is called when a connection has been acquired.
+// If WithDisableAcquireTracer was set, then the function is no-op.
 func (t *Tracer) TraceAcquireEnd(ctx context.Context, _ *pgxpool.Pool, data pgxpool.TraceAcquireEndData) {
+	if t.disableAcquireTracer {
+		return
+	}
+
 	span := trace.SpanFromContext(ctx)
 	t.incrementOperationErrorCount(ctx, data.Err, pgxOperationAcquire)
 	t.recordOperationDuration(ctx, pgxOperationAcquire)
